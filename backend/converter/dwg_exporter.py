@@ -52,13 +52,17 @@ def export_optimized_dwg(doc, out_filepath: str):
     if oda_available:
         try:
             # Save DXF first, then convert to DWG via ODA
-            dxf_temp = out_filepath
-            doc.saveas(dxf_temp)
-            odafc.export_dwg(doc, dwg_path, version='R2010')
-            if os.path.isfile(dwg_path):
+            doc.saveas(out_filepath)
+            try:
+                odafc.export_dwg(doc, dwg_path, version='R2010')
+            except Exception as e:
+                # ezdxf may raise on stderr warnings even when conversion succeeds
+                print(f"ODA raised exception: {e}")
+            if os.path.isfile(dwg_path) and os.path.getsize(dwg_path) > 0:
+                print(f"DWG created successfully: {dwg_path}")
                 return
             else:
-                print(f"ODA export completed but DWG file not found at {dwg_path}")
+                print(f"DWG file not found at {dwg_path}, falling back to DXF")
         except Exception as e:
             import traceback
             print(f"ODA DWG export failed: {e}")

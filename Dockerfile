@@ -39,6 +39,7 @@ RUN apt-get update && dpkg -i /tmp/ODAFileConverter.deb || apt-get install -f -y
 # Use xcb via Xvfb (not offscreen - ODA doesn't bundle offscreen plugin)
 ENV QT_PLUGIN_PATH=/usr/bin/ODAFileConverter_27.1.0.0/plugins
 ENV DISPLAY=:99
+ENV XDG_RUNTIME_DIR=/tmp/runtime-root
 
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
