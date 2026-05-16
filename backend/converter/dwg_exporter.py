@@ -38,9 +38,17 @@ def export_optimized_dwg(doc, out_filepath: str):
 
     if oda_available:
         try:
+            # Save DXF first, then convert to DWG via ODA
+            dxf_temp = out_filepath
+            doc.saveas(dxf_temp)
             odafc.export_dwg(doc, dwg_path, version='R2010')
-            return
+            if os.path.isfile(dwg_path):
+                return
+            else:
+                print(f"ODA export completed but DWG file not found at {dwg_path}")
         except Exception as e:
-            print(f"ODA DWG export failed: {e}, falling back to DXF")
+            import traceback
+            print(f"ODA DWG export failed: {e}")
+            traceback.print_exc()
 
     doc.saveas(out_filepath)

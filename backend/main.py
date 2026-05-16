@@ -50,11 +50,28 @@ async def debug_oda():
     which = subprocess.run(["which", "ODAFileConverter"], capture_output=True, text=True)
     find = subprocess.run(["find", "/", "-name", "ODAFileConverter", "-type", "f"], capture_output=True, text=True, timeout=5)
     from ezdxf.addons import odafc
+    # Test actual ODA execution
+    oda_test = ""
+    try:
+        r = subprocess.run(["ODAFileConverter"], capture_output=True, text=True, timeout=5)
+        oda_test = f"rc={r.returncode} stdout={r.stdout[:200]} stderr={r.stderr[:200]}"
+    except Exception as e:
+        oda_test = str(e)
+    # Check ldd
+    ldd = ""
+    try:
+        r2 = subprocess.run(["ldd", "/usr/bin/ODAFileConverter"], capture_output=True, text=True, timeout=5)
+        missing = [l.strip() for l in r2.stdout.split('\n') if 'not found' in l]
+        ldd = missing if missing else "all libs found"
+    except Exception as e:
+        ldd = str(e)
     return {
         "paths_checked": found,
         "which": which.stdout.strip(),
         "find": find.stdout.strip(),
         "odafc_installed": odafc.is_installed(),
+        "oda_exec_test": oda_test,
+        "missing_libs": ldd,
     }
 
 
