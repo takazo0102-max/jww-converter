@@ -57,6 +57,8 @@ async def debug_oda():
         oda_test = f"rc={r.returncode} stdout={r.stdout[:200]} stderr={r.stderr[:200]}"
     except Exception as e:
         oda_test = str(e)
+    # Find Qt plugins dir
+    qt_plugins = subprocess.run(["find", "/usr", "-path", "*/ODAFileConverter*/plugins", "-type", "d"], capture_output=True, text=True, timeout=5)
     # Check ldd
     ldd = ""
     try:
@@ -72,6 +74,8 @@ async def debug_oda():
         "odafc_installed": odafc.is_installed(),
         "oda_exec_test": oda_test,
         "missing_libs": ldd,
+        "qt_plugins_dir": qt_plugins.stdout.strip(),
+        "QT_PLUGIN_PATH": os.environ.get("QT_PLUGIN_PATH", "not set"),
     }
 
 

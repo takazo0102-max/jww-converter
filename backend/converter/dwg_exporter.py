@@ -11,6 +11,19 @@ ODA_LINUX_PATHS = [
 
 def _ensure_oda_configured():
     """Register ODA File Converter path with ezdxf if available."""
+    # Set Qt plugin path for ODA's bundled Qt
+    if 'QT_PLUGIN_PATH' not in os.environ:
+        import glob
+        for pattern in [
+            "/usr/bin/ODAFileConverter_*/plugins",
+            "/usr/lib/ODAFileConverter*/plugins",
+            "/opt/ODAFileConverter*/plugins",
+        ]:
+            matches = glob.glob(pattern)
+            if matches:
+                os.environ['QT_PLUGIN_PATH'] = matches[0]
+                break
+
     if odafc.is_installed():
         return True
 

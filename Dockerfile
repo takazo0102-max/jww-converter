@@ -21,8 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install ODA File Converter from local deb
 COPY ODAFileConverter.deb /tmp/ODAFileConverter.deb
-RUN dpkg -i /tmp/ODAFileConverter.deb || apt-get update && apt-get install -f -y \
-    && rm -f /tmp/ODAFileConverter.deb
+RUN apt-get update && dpkg -i /tmp/ODAFileConverter.deb || apt-get install -f -y \
+    && rm -f /tmp/ODAFileConverter.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+# Find and set Qt plugin path from ODA installation
+RUN QT_DIR=$(find /usr -path "*/ODAFileConverter*/plugins" -type d 2>/dev/null | head -1) \
+    && echo "QT plugins found at: $QT_DIR" \
+    && if [ -n "$QT_DIR" ]; then echo "$QT_DIR" > /etc/oda_qt_path; fi
 
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
