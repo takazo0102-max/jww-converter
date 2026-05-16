@@ -17,6 +17,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb-xkb1 \
     libxkbcommon-x11-0 \
     libdbus-1-3 \
+    libxcb-cursor0 \
+    libxcb-shape0 \
+    libxcb-xfixes0 \
+    libxcb-randr0 \
+    libxcb-sync1 \
+    libxcb-shm0 \
+    libxcb-util1 \
+    libxcb-glx0 \
+    libsm6 \
+    libice6 \
     xvfb \
     && rm -rf /var/lib/apt/lists/*
 
