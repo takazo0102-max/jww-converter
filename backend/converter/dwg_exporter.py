@@ -3,15 +3,21 @@ from ezdxf.addons import odafc
 import os
 
 ODA_MAC_PATH = "/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter"
+ODA_LINUX_PATHS = [
+    "/usr/bin/ODAFileConverter",
+    "/usr/local/bin/ODAFileConverter",
+    "/opt/ODAFileConverter/ODAFileConverter",
+]
 
 def _ensure_oda_configured():
     """Register ODA File Converter path with ezdxf if available."""
     if odafc.is_installed():
         return True
 
-    if os.path.isfile(ODA_MAC_PATH):
-        ezdxf.options.set("odafc-addon", "unix_exec_path", ODA_MAC_PATH)
-        return True
+    for path in [ODA_MAC_PATH] + ODA_LINUX_PATHS:
+        if os.path.isfile(path):
+            ezdxf.options.set("odafc-addon", "unix_exec_path", path)
+            return True
 
     return False
 
