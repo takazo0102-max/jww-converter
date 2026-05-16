@@ -1,4 +1,7 @@
+import logging
 import ezdxf
+
+logger = logging.getLogger(__name__)
 
 
 def map_entities(filepath: str, mapping_config: dict, direction: str = "to-jww"):
@@ -10,14 +13,7 @@ def map_entities(filepath: str, mapping_config: dict, direction: str = "to-jww")
         return _map_jww_entities(filepath, mapping_config)
 
     if filepath.lower().endswith('.dwg'):
-        print("DWG conversion mock.")
-        doc = ezdxf.new('AC1009')
-        msp = doc.modelspace()
-        if '0-0' not in doc.layers: doc.layers.add('0-0')
-        if '1-1' not in doc.layers: doc.layers.add('1-1')
-        msp.add_line((0, 0), (100, 100), dxfattribs={'layer': '0-0', 'color': 7})
-        msp.add_circle((50, 50), 20, dxfattribs={'layer': '1-1', 'color': 3})
-        return doc
+        return _map_dwg_entities(filepath, mapping_config, direction)
 
     doc = ezdxf.readfile(filepath)
     msp = doc.modelspace()
@@ -55,7 +51,8 @@ def map_entities(filepath: str, mapping_config: dict, direction: str = "to-jww")
 
             try:
                 entity.dxf.color = aci_color
-            except: pass
+            except Exception as e:
+                logger.warning(f"Failed to set color on entity: {e}")
 
         orig_linetype = str(entity.dxf.linetype) if hasattr(entity.dxf, 'linetype') else "Continuous"
         if orig_linetype in linetype_map:
@@ -78,7 +75,8 @@ def map_entities(filepath: str, mapping_config: dict, direction: str = "to-jww")
 
             try:
                 entity.dxf.linetype = dxf_lt
-            except: pass
+            except Exception as e:
+                logger.warning(f"Failed to set linetype on entity: {e}")
 
     return doc
 
@@ -107,3 +105,33 @@ def _map_jww_entities(filepath: str, mapping_config: dict):
             entity.dxf.layer = layer_map[orig_layer]
 
     return doc
+
+
+def _map_dwg_entities(filepath: str, mapping_config: dict, direction: str):
+    """
+    Handle DWG files. Attempts to read via ezdxf's ODA addon,
+    falls back to error if not available.
+    """
+    try:
+        from ezdxf.addons import odafc
+        from converter.dwg_exporter import _ensure_oda_configured
+
+        if _ensure_oda_configured():
+            # Convert DWG to DXF via ODA, then read
+            import tempfile
+            import os
+            temp_dxf = filepath.rsplit('.', 1)[0] + '_temp.dxf'
+            try:
+                odafc.convert(filepath, temp_dxf)
+                doc = ezdxf.readfile(temp_dxf)
+            finally:
+                if os.path.exists(temp_dxf):
+                    os.remove(temp_dxf)
+            return doc
+    except Exception as e:
+        logger.warning(f"DWG reading via ODA failed: {e}")
+
+    raise ValueError(
+        "DWGファイルの読み込みにはODA File Converterが必要です。"
+        "DXFまたはJWW形式でアップロードしてください。"
+    )

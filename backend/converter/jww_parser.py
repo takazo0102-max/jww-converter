@@ -4,12 +4,17 @@ JWW (Jw_cad) binary file parser.
 Parses the proprietary JWW format based on MFC CArchive serialization.
 Reference: https://www.jwcad.net/jwdatafmt.txt (v7.02 spec)
 
-Supports common entity types: Line, Circle/Arc, Text, Solid, Point, Dimension, Block.
+Supports entity types: Line, Circle/Arc, Ellipse, Text, Solid, Point,
+Dimension, Block, and gracefully skips unknown entities.
 """
 
 import struct
 import io
+import logging
 from dataclasses import dataclass, field
+from typing import Optional, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -76,8 +81,13 @@ class JwwPoint(JwwEntity):
 
 @dataclass
 class JwwDimension(JwwEntity):
-    line: JwwLine = None
-    text: JwwText = None
+    line: Optional[JwwLine] = None
+    text: Optional[JwwText] = None
+    # Extension lines for proper dimension rendering
+    ext_line1: Optional[JwwLine] = None
+    ext_line2: Optional[JwwLine] = None
+    arrow_line1: Optional[JwwLine] = None
+    arrow_line2: Optional[JwwLine] = None
 
 
 @dataclass
@@ -88,6 +98,14 @@ class JwwBlock(JwwEntity):
     scale_y: float = 1.0
     rotation: float = 0.0
     block_number: int = 0
+
+
+@dataclass
+class JwwBlockDef:
+    """Block definition containing child entities."""
+    block_number: int = 0
+    name: str = ""
+    entities: list = field(default_factory=list)
 
 
 @dataclass
@@ -108,6 +126,8 @@ class JwwDrawingData:
     layer_group_names: list = field(default_factory=list)
     entities: list = field(default_factory=list)
     block_defs: list = field(default_factory=list)
+    # Stats for diagnostics
+    skipped_entities: dict = field(default_factory=dict)
 
 
 class MfcReader:
@@ -220,6 +240,27 @@ class MfcReader:
     def skip(self, n: int):
         self.stream.seek(n, 1)
 
+    def save_position(self) -> int:
+        """Save current stream position for rollback."""
+        return self.stream.tell()
+
+    def restore_position(self, pos: int):
+        """Restore stream to a saved position."""
+        self.stream.seek(pos)
+
+
+# Known byte sizes for entity data (after base data) for skip-recovery.
+# These are approximate sizes used when we need to skip an entity that
+# failed mid-parse. Base data is already consumed.
+ENTITY_DATA_SIZES = {
+    'CDataSen': 32,       # 4 doubles (x1,y1,x2,y2)
+    'CDataEnko': 60,      # 7 doubles + 1 dword
+    'CDataTen': 16,       # 2 doubles (minimum, may have extras)
+    'CDataMoji': 64,      # 4 doubles + dword + 4 doubles + 2 strings (variable)
+    'CDataSolid': 64,     # 8 doubles (4 points) + optional dword
+    'CDataBlock': 44,     # 5 doubles + 1 dword
+}
+
 
 class JwwParser:
     """Parses JWW binary files."""
@@ -231,6 +272,7 @@ class JwwParser:
         self.reader: MfcReader = None
         self.version = 0
         self.drawing = JwwDrawingData()
+        self._entity_positions = []  # Track positions for recovery
 
     def parse(self) -> JwwDrawingData:
         with open(self.filepath, 'rb') as f:
@@ -246,6 +288,9 @@ class JwwParser:
         self._parse_drawing_settings()
         self._parse_layer_names()
         self._parse_entity_list()
+
+        if self.drawing.skipped_entities:
+            logger.info(f"Skipped entity types: {self.drawing.skipped_entities}")
 
         return self.drawing
 
@@ -336,7 +381,7 @@ class JwwParser:
         except EOFError:
             return
 
-        for _ in range(count):
+        for i in range(count):
             if r.remaining < 4:
                 break
             try:
@@ -345,15 +390,51 @@ class JwwParser:
                     self.drawing.entities.append(entity)
             except (EOFError, struct.error):
                 break
-            except Exception:
-                continue
+            except Exception as e:
+                logger.warning(f"Error parsing entity {i}: {e}")
+                # Try to recover by scanning for next entity tag
+                if not self._try_recover_to_next_entity():
+                    break
+
+    def _try_recover_to_next_entity(self) -> bool:
+        """
+        Attempt to recover stream position by scanning for the next
+        valid CData class tag. Returns True if recovery succeeded.
+        """
+        r = self.reader
+        data = r.stream.getvalue()
+        pos = r.pos
+
+        # Scan forward looking for a valid class tag pattern
+        scan_limit = min(pos + 2000, len(data) - 10)
+        while pos < scan_limit:
+            # Look for existing class tag reference (0x8000 | tag)
+            w = struct.unpack_from('<H', data, pos)[0]
+            if w & 0x8000:
+                tag = w & 0x7FFF
+                if tag in r.class_registry:
+                    class_name = r.class_registry[tag]
+                    if class_name.startswith('CData'):
+                        r.stream.seek(pos)
+                        return True
+            # Look for new class definition (0xFFFF)
+            if w == 0xFFFF and pos + 6 < len(data):
+                name_len = struct.unpack_from('<H', data, pos + 4)[0]
+                if 5 <= name_len <= 20 and pos + 6 + name_len <= len(data):
+                    name = data[pos + 6:pos + 6 + name_len]
+                    if name.startswith(b'CData') and all(32 <= b < 127 for b in name):
+                        r.stream.seek(pos)
+                        return True
+            pos += 1
+        return False
 
     def _read_entity(self):
         r = self.reader
+        pos_before = r.save_position()
         class_name, _ = r.read_class_tag()
         if class_name is None:
             return None
-        return self._parse_entity_by_class(class_name)
+        return self._parse_entity_by_class(class_name, pos_before)
 
     def _read_base_data(self) -> dict:
         r = self.reader
@@ -368,7 +449,7 @@ class JwwParser:
         }
         return base
 
-    def _parse_entity_by_class(self, class_name: str):
+    def _parse_entity_by_class(self, class_name: str, pos_before: int):
         if class_name == 'CDataSen':
             return self._parse_line()
         elif class_name == 'CDataEnko':
@@ -384,7 +465,30 @@ class JwwParser:
         elif class_name == 'CDataBlock':
             return self._parse_block()
         else:
+            # Unknown entity type - track it and try to skip safely
+            self.drawing.skipped_entities[class_name] = \
+                self.drawing.skipped_entities.get(class_name, 0) + 1
+            logger.debug(f"Skipping unknown entity: {class_name}")
+            self._skip_unknown_entity(class_name)
             return None
+
+    def _skip_unknown_entity(self, class_name: str):
+        """
+        Attempt to skip an unknown entity by reading its base data
+        and then scanning for the next valid entity tag.
+
+        Most JWW entities start with the same base data structure,
+        so we try to consume it to stay aligned.
+        """
+        r = self.reader
+        try:
+            # Most CData* entities share the same base structure
+            # Try to read and discard base data
+            self._read_base_data()
+        except (EOFError, struct.error):
+            pass
+        # The remaining entity-specific data is variable length,
+        # so we rely on _try_recover_to_next_entity in the caller
 
     def _parse_line(self) -> JwwLine:
         r = self.reader
@@ -579,8 +683,16 @@ def get_jww_metadata(drawing: JwwDrawingData) -> dict:
             name = layer_name_map.get(key, f"{format(gi, 'X')}-{format(li, 'X')}")
             used_layers.append(name)
 
+    entity_type_counts = {}
+    for entity in drawing.entities:
+        t = entity.entity_type
+        entity_type_counts[t] = entity_type_counts.get(t, 0) + 1
+
     return {
         "layers": sorted(used_layers) if used_layers else ["0"],
         "colors": sorted(colors) if colors else [1, 2, 3, 7],
         "linetypes": sorted(linetypes) if linetypes else [1],
+        "entity_counts": entity_type_counts,
+        "skipped_entities": drawing.skipped_entities,
+        "total_entities": len(drawing.entities),
     }
