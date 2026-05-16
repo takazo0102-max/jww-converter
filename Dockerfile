@@ -17,15 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb-xkb1 \
     libxkbcommon-x11-0 \
     libdbus-1-3 \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install ODA File Converter
-RUN curl -fsSL -o /tmp/oda.deb \
-    'https://www.opendesign.com/guestfiles/get?filename=ODAFileConverter_QT6_lnxX64_8.3dll_27.1.deb' \
-    && dpkg -i /tmp/oda.deb || apt-get install -f -y \
-    && rm -f /tmp/oda.deb \
-    || echo "ODA File Converter not available, DWG output will fallback to DXF"
+# Install ODA File Converter from local deb
+COPY ODAFileConverter.deb /tmp/ODAFileConverter.deb
+RUN dpkg -i /tmp/ODAFileConverter.deb || apt-get update && apt-get install -f -y \
+    && rm -f /tmp/ODAFileConverter.deb
 
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
