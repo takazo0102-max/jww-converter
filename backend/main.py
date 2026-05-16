@@ -76,6 +76,14 @@ async def debug_oda():
         "missing_libs": ldd,
         "qt_plugins_dir": qt_plugins.stdout.strip(),
         "QT_PLUGIN_PATH": os.environ.get("QT_PLUGIN_PATH", "not set"),
+        "platforms_contents": subprocess.run(
+            ["find", "/usr/bin/ODAFileConverter_27.1.0.0/plugins/platforms", "-type", "f"],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip(),
+        "sys_offscreen": subprocess.run(
+            ["find", "/usr", "-name", "libqoffscreen.so", "-type", "f"],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip(),
     }
 
 
