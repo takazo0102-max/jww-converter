@@ -38,6 +38,26 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 ALLOWED_EXTENSIONS = ('.dxf', '.dwg', '.jww')
 
 
+@app.get("/api/debug/oda")
+async def debug_oda():
+    import subprocess
+    paths = [
+        "/usr/bin/ODAFileConverter",
+        "/usr/local/bin/ODAFileConverter",
+        "/opt/ODAFileConverter/ODAFileConverter",
+    ]
+    found = {p: os.path.isfile(p) for p in paths}
+    which = subprocess.run(["which", "ODAFileConverter"], capture_output=True, text=True)
+    find = subprocess.run(["find", "/", "-name", "ODAFileConverter", "-type", "f"], capture_output=True, text=True, timeout=5)
+    from ezdxf.addons import odafc
+    return {
+        "paths_checked": found,
+        "which": which.stdout.strip(),
+        "find": find.stdout.strip(),
+        "odafc_installed": odafc.is_installed(),
+    }
+
+
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(ALLOWED_EXTENSIONS):
