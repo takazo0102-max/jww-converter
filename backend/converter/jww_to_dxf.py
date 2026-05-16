@@ -61,12 +61,34 @@ def _sanitize_layer_name(name: str) -> str:
 class JwwToDxfConverter:
     """Thread-safe JWW to DXF converter. All state is instance-scoped."""
 
+    # JWW pen width index to DXF lineweight (in 1/100 mm)
+    JWW_PEN_WIDTH_TO_LINEWEIGHT = {
+        0: -1,    # Default (ByLayer)
+        1: 13,    # 0.13mm
+        2: 18,    # 0.18mm
+        3: 25,    # 0.25mm
+        4: 35,    # 0.35mm
+        5: 50,    # 0.50mm
+        6: 70,    # 0.70mm
+        7: 100,   # 1.00mm
+        8: 140,   # 1.40mm
+        9: 200,   # 2.00mm
+    }
+
+    # JWW layer state meanings
+    LAYER_STATE_VISIBLE = 1      # 表示
+    LAYER_STATE_EDITABLE = 3     # 編集可
+    LAYER_STATE_HIDDEN = 0       # 非表示
+    LAYER_STATE_DISPLAY_ONLY = 2 # 表示のみ
+
     def __init__(self, drawing: JwwDrawingData,
                  color_map: dict = None, linetype_map: dict = None):
         self.drawing = drawing
         self.color_override = color_map or {}
         self.linetype_override = linetype_map or {}
+        self._group_names = self._build_group_names()
         self.layer_map = self._build_layer_name_map()
+        self._layer_states = self._build_layer_states()
         # Sanitize all layer names
         for key in self.layer_map:
             self.layer_map[key] = _sanitize_layer_name(self.layer_map[key])
@@ -100,24 +122,89 @@ class JwwToDxfConverter:
 
         return self.doc
 
+    def _build_group_names(self) -> dict:
+        """Build group index -> group name map."""
+        group_names = {}
+        for i, name in enumerate(self.drawing.layer_group_names):
+            if name:
+                group_names[i] = name
+        return group_names
+
     def _build_layer_name_map(self) -> dict:
-        """Build a map from (glayer, layer) index pair to layer name string."""
+        """
+        Build a map from (glayer, layer) index pair to layer name string.
+        Uses 'GroupName|LayerName' format to disambiguate same-named layers
+        in different groups. Only adds group prefix for groups with entities.
+        """
         name_map = {}
+        # First pass: collect all layer names to detect duplicates
+        layer_names_by_group = {}
         for layer_info in self.drawing.layers:
             gi = layer_info.group_index
             li = layer_info.layer_index
             if layer_info.name:
-                name_map[(gi, li)] = layer_info.name
+                layer_names_by_group.setdefault(layer_info.name, set()).add(gi)
+
+        # Detect which names appear in multiple groups
+        duplicate_names = {name for name, groups in layer_names_by_group.items()
+                          if len(groups) > 1}
+
+        for layer_info in self.drawing.layers:
+            gi = layer_info.group_index
+            li = layer_info.layer_index
+            if layer_info.name:
+                base_name = layer_info.name
+                # Add group prefix for disambiguation when same name in multiple groups
+                if base_name in duplicate_names and gi in self._group_names:
+                    name_map[(gi, li)] = f"{self._group_names[gi]}_{base_name}"
+                else:
+                    name_map[(gi, li)] = base_name
             else:
                 g_char = format(gi, 'X')
                 l_char = format(li, 'X')
                 name_map[(gi, li)] = f"{g_char}-{l_char}"
         return name_map
 
+    def _build_layer_states(self) -> dict:
+        """Build (glayer, layer) -> state map for visibility/lock control."""
+        states = {}
+        for layer_info in self.drawing.layers:
+            gi = layer_info.group_index
+            li = layer_info.layer_index
+            states[(gi, li)] = layer_info.state
+        return states
+
     def _setup_layers(self):
-        for layer_name in set(self.layer_map.values()):
+        """Set up DXF layers with visibility and lock states from JWW.
+        Only creates layers that have entities assigned to them."""
+        # Find which layers actually have entities
+        used_layer_keys = set()
+        for entity in self.drawing.entities:
+            gi = entity.glayer if entity.glayer < 16 else 0
+            li = entity.layer if entity.layer < 16 else 0
+            used_layer_keys.add((gi, li))
+
+        # Build reverse map for used layers only
+        used_layer_names = set()
+        name_to_keys = {}
+        for key in used_layer_keys:
+            name = self.layer_map.get(key)
+            if name:
+                used_layer_names.add(name)
+                name_to_keys.setdefault(name, []).append(key)
+
+        for layer_name in used_layer_names:
             if layer_name not in self.doc.layers:
-                self.doc.layers.add(layer_name)
+                layer = self.doc.layers.add(layer_name)
+
+                # Apply state from JWW (use first matching key's state)
+                keys = name_to_keys.get(layer_name, [])
+                if keys:
+                    state = self._layer_states.get(keys[0], 1)
+                    if state == 0:  # 非表示
+                        layer.off()
+                    elif state == 2:  # 表示のみ (locked)
+                        layer.lock()
 
     def _setup_linetypes(self):
         lt_defs = {
@@ -197,11 +284,16 @@ class JwwToDxfConverter:
         return JWW_LINETYPE_MAP.get(jww_style, "Continuous")
 
     def _make_attribs(self, entity) -> dict:
-        return {
+        attribs = {
             'layer': self._get_layer_name(entity),
             'color': self._get_aci_color(entity.pen_color),
             'linetype': self._get_linetype(entity.pen_style),
         }
+        # Map pen width to DXF lineweight
+        lw = self.JWW_PEN_WIDTH_TO_LINEWEIGHT.get(entity.pen_width)
+        if lw is not None and lw > 0:
+            attribs['lineweight'] = lw
+        return attribs
 
     def _add_entity(self, target, entity):
         """Add entity to a target (modelspace or block)."""
@@ -315,20 +407,63 @@ class JwwToDxfConverter:
         height = entity.size_y if entity.size_y > 0 else 3.0
         rotation = math.degrees(entity.angle) if entity.angle != 0 else 0.0
 
-        attribs['height'] = height
-        if rotation:
-            attribs['rotation'] = rotation
+        text_content = entity.text
 
-        # Set width factor from size_x/size_y ratio
-        if entity.size_x > 0 and entity.size_y > 0:
-            width_factor = entity.size_x / entity.size_y
-            if 0.1 < width_factor < 10.0 and abs(width_factor - 1.0) > 0.01:
-                attribs['width'] = width_factor
+        # Check for multi-line text (JWW uses \n for line breaks)
+        if '\n' in text_content:
+            # Use MTEXT for multi-line
+            attribs['char_height'] = height
+            if rotation:
+                attribs['rotation'] = rotation
+            # Calculate approximate width from text and character size
+            max_line_len = max(len(line) for line in text_content.split('\n'))
+            char_width = entity.size_x if entity.size_x > 0 else height * 0.7
+            attribs['width'] = max_line_len * char_width * 1.1
 
-        target.add_text(
-            entity.text,
-            dxfattribs=attribs,
-        ).set_placement((entity.x1, entity.y1))
+            mtext = target.add_mtext(
+                text_content,
+                dxfattribs=attribs,
+            )
+            mtext.set_location((entity.x1, entity.y1))
+        else:
+            # Single-line TEXT
+            attribs['height'] = height
+            if rotation:
+                attribs['rotation'] = rotation
+
+            # Set width factor from size_x/size_y ratio
+            if entity.size_x > 0 and entity.size_y > 0:
+                width_factor = entity.size_x / entity.size_y
+                if 0.1 < width_factor < 10.0 and abs(width_factor - 1.0) > 0.01:
+                    attribs['width'] = width_factor
+
+            # Set text style for Japanese fonts
+            style_name = self._get_or_create_text_style(entity.font_name)
+            if style_name:
+                attribs['style'] = style_name
+
+            target.add_text(
+                text_content,
+                dxfattribs=attribs,
+            ).set_placement((entity.x1, entity.y1))
+
+    def _get_or_create_text_style(self, font_name: str) -> str:
+        """Get or create a DXF text style for a JWW font name."""
+        if not font_name:
+            return ""
+
+        # Normalize the style name (remove spaces for DXF compatibility)
+        style_name = _sanitize_layer_name(font_name.replace(' ', ''))
+
+        if style_name not in self.doc.styles:
+            try:
+                self.doc.styles.new(style_name, dxfattribs={
+                    'font': font_name,
+                })
+            except Exception:
+                return ""
+
+        return style_name
 
     def _add_solid(self, target, entity: JwwSolid):
         if len(entity.points) < 3:
