@@ -21,9 +21,13 @@ document.querySelectorAll('input[name="conversion-mode"]').forEach(radio => {
             dzText.textContent = "ここにDWG/DXFファイルをドラッグ＆ドロップ";
             mDesc.textContent = "標準的なDWG/DXFファイルをJw_cad向けDXF形式に変換します。";
             fileInput.accept = ".dxf,.dwg";
+        } else if (currentMode === 'to-dxf') {
+            dzText.textContent = "ここにDWG/JWWファイルをドラッグ＆ドロップ";
+            mDesc.textContent = "DWG/JWWファイルをAutoCAD互換DXF（R2010）に変換します。";
+            fileInput.accept = ".dwg,.jww,.dxf";
         } else {
             dzText.textContent = "ここにJWWファイルをドラッグ＆ドロップ";
-            mDesc.textContent = "Jw_cadのJWWファイルを直接読み込み、AutoCAD DWG/DXF形式に変換します。";
+            mDesc.textContent = "Jw_cadのJWWファイルをAutoCAD互換DXF形式に変換します。";
             fileInput.accept = ".jww";
         }
     });
@@ -143,10 +147,15 @@ async function handleMultipleFiles(fileList) {
     }
 
     const firstExt = validFiles[0].name.toLowerCase().split('.').pop();
+    // Auto-detect conversion mode from file type
     if (firstExt === 'jww' && currentMode === 'to-jww') {
         currentMode = 'jww-to-dwg';
         document.getElementById('mode-jww-to-dwg').checked = true;
-        document.getElementById('mode-desc').textContent = "Jw_cadのJWWファイルを直接読み込み、AutoCAD DWG/DXF形式に変換します。";
+        document.getElementById('mode-desc').textContent = "Jw_cadのJWWファイルをAutoCAD互換DXF形式に変換します。";
+    } else if (firstExt === 'dwg' && currentMode === 'jww-to-dwg') {
+        currentMode = 'to-dxf';
+        document.getElementById('mode-to-dxf').checked = true;
+        document.getElementById('mode-desc').textContent = "DWG/JWWファイルをAutoCAD互換DXF（R2010）に変換します。";
     }
 
     showLoading(`${validFiles.length}件のファイルをアップロード中...`);
@@ -436,16 +445,15 @@ function showSingleResult(data) {
     const successMsg = document.getElementById('success-message');
     downloadLink.textContent = `${outputFmt}ファイルをダウンロード`;
 
+    const sourceFormat = (data.source_format || uploadedFiles[0].source_format || '').toUpperCase();
     if (currentMode === 'jww-to-dwg') {
-        if (outputFmt === 'DWG') {
-            successMsg.textContent = "JWWファイルをAutoCAD DWG形式に変換しました。";
-        } else {
-            successMsg.textContent = "JWWファイルをAutoCAD互換DXF形式に変換しました。（ODA File Converterが利用可能な環境ではDWG出力されます）";
-        }
+        successMsg.textContent = `JWWファイルをAutoCAD互換${outputFmt}形式に変換しました。`;
     } else if (currentMode === 'to-jww') {
-        successMsg.textContent = "Jw_cad互換DXFファイルの準備ができました。";
+        successMsg.textContent = `${sourceFormat}ファイルをJw_cad互換DXF形式に変換しました。`;
+    } else if (currentMode === 'to-dxf') {
+        successMsg.textContent = `${sourceFormat}ファイルをAutoCAD互換DXF（R2010）形式に変換しました。`;
     } else {
-        successMsg.textContent = "AutoCAD互換DXFファイルの準備ができました。";
+        successMsg.textContent = "変換が完了しました。";
     }
 }
 

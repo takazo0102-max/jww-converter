@@ -202,33 +202,34 @@ async def convert_file(request: ConvertRequest):
         raise HTTPException(status_code=404, detail="ファイルが見つかりません。")
 
     try:
+        source_ext = os.path.splitext(filepath)[1].lower()
         mapped_data = map_entities(filepath, request.mapping, request.direction)
 
-        is_jww_source = filepath.lower().endswith('.jww')
-
+        # Determine output format based on direction and source
         if request.direction == "to-jww":
+            # Output DXF optimized for Jw_cad (R12/R2000)
             out_ext = ".dxf"
             out_filepath = os.path.join(OUTPUT_DIR, f"{file_id}_converted{out_ext}")
             export_optimized_dxf(mapped_data, out_filepath)
-        elif is_jww_source or request.direction == "jww-to-dwg":
+        elif request.direction == "to-dxf":
+            # Output standard DXF (R2010)
             out_ext = ".dxf"
             out_filepath = os.path.join(OUTPUT_DIR, f"{file_id}_converted{out_ext}")
-            from converter.dwg_exporter import export_optimized_dwg
-            export_optimized_dwg(mapped_data, out_filepath)
-            dwg_path = os.path.join(OUTPUT_DIR, f"{file_id}_converted.dwg")
-            if os.path.exists(dwg_path):
-                out_ext = ".dwg"
+            mapped_data.saveas(out_filepath)
         else:
+            # Default: DXF output
             out_ext = ".dxf"
             out_filepath = os.path.join(OUTPUT_DIR, f"{file_id}_converted{out_ext}")
-            from converter.dwg_exporter import export_optimized_dwg
-            export_optimized_dwg(mapped_data, out_filepath)
+            mapped_data.saveas(out_filepath)
 
         return {
             "download_url": f"/api/download/{file_id}",
-            "output_format": out_ext.lstrip('.')
+            "output_format": out_ext.lstrip('.'),
+            "source_format": source_ext.lstrip('.')
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"変換エラー: {str(e)}")
 
 
@@ -252,25 +253,19 @@ async def convert_batch(request: BatchConvertRequest):
 
         try:
             mapped_data = map_entities(filepath, request.mapping, request.direction)
-            is_jww_source = filepath.lower().endswith('.jww')
 
             if request.direction == "to-jww":
                 out_ext = ".dxf"
                 out_filepath = os.path.join(OUTPUT_DIR, f"{file_id}_converted{out_ext}")
                 export_optimized_dxf(mapped_data, out_filepath)
-            elif is_jww_source or request.direction == "jww-to-dwg":
+            elif request.direction == "to-dxf":
                 out_ext = ".dxf"
                 out_filepath = os.path.join(OUTPUT_DIR, f"{file_id}_converted{out_ext}")
-                from converter.dwg_exporter import export_optimized_dwg
-                export_optimized_dwg(mapped_data, out_filepath)
-                dwg_path = os.path.join(OUTPUT_DIR, f"{file_id}_converted.dwg")
-                if os.path.exists(dwg_path):
-                    out_ext = ".dwg"
+                mapped_data.saveas(out_filepath)
             else:
                 out_ext = ".dxf"
                 out_filepath = os.path.join(OUTPUT_DIR, f"{file_id}_converted{out_ext}")
-                from converter.dwg_exporter import export_optimized_dwg
-                export_optimized_dwg(mapped_data, out_filepath)
+                mapped_data.saveas(out_filepath)
 
             results.append({
                 "file_id": file_id,
