@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: jww-converter
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"

@@ -1,0 +1,11 @@
+__pycache__
+*.pyc
+.git
+.gitignore
+backend/uploads/*
+backend/outputs/*
+*.meta
+*.batch
+docker-compose.yml
+README.md
+.claude
