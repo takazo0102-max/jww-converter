@@ -38,6 +38,48 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 ALLOWED_EXTENSIONS = ('.dxf', '.dwg', '.jww')
 
 
+@app.get("/api/debug/oda-test")
+async def debug_oda_test():
+    """Actually try to convert a DXF to DWG via ODA."""
+    import ezdxf
+    from ezdxf.addons import odafc
+    from converter.dwg_exporter import _ensure_oda_configured
+
+    test_dxf = os.path.join(OUTPUT_DIR, "_test_oda.dxf")
+    test_dwg = os.path.join(OUTPUT_DIR, "_test_oda.dwg")
+
+    # Clean up
+    for f in [test_dxf, test_dwg]:
+        if os.path.exists(f):
+            os.remove(f)
+
+    doc = ezdxf.new('R2010')
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (100, 100))
+    doc.saveas(test_dxf)
+
+    oda_ok = _ensure_oda_configured()
+    error_msg = ""
+    try:
+        odafc.export_dwg(doc, test_dwg, version='R2010')
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+
+    dwg_exists = os.path.isfile(test_dwg)
+    dwg_size = os.path.getsize(test_dwg) if dwg_exists else 0
+
+    return {
+        "oda_configured": oda_ok,
+        "dwg_created": dwg_exists,
+        "dwg_size": dwg_size,
+        "error": error_msg,
+        "env_QT_PLUGIN_PATH": os.environ.get("QT_PLUGIN_PATH", ""),
+        "env_QT_QPA_PLATFORM": os.environ.get("QT_QPA_PLATFORM", ""),
+        "env_DISPLAY": os.environ.get("DISPLAY", ""),
+    }
+
+
 @app.get("/api/debug/oda")
 async def debug_oda():
     import subprocess
@@ -76,6 +118,8 @@ async def debug_oda():
         "missing_libs": ldd,
         "qt_plugins_dir": qt_plugins.stdout.strip(),
         "QT_PLUGIN_PATH": os.environ.get("QT_PLUGIN_PATH", "not set"),
+        "xvfb_available": subprocess.run(["which", "Xvfb"], capture_output=True, text=True).stdout.strip(),
+        "oda_via_xvfb": "",
         "platforms_contents": subprocess.run(
             ["find", "/usr/bin/ODAFileConverter_27.1.0.0/plugins/platforms", "-type", "f"],
             capture_output=True, text=True, timeout=5
